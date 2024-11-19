@@ -1,0 +1,213 @@
+apiVersion: leaderworkerset.x-k8s.io/v1
+kind: LeaderWorkerSet
+metadata:
+  name: triton-trtllm
+spec:
+  replicas: 1
+  leaderWorkerTemplate:
+    size: 2
+    leaderTemplate:
+      metadata:
+        name: triton-trtllm-leader
+        labels:
+          app: triton-trtllm
+          role: leader
+      spec:
+        nodeSelector:
+          cloud.google.com/gke-gpu: "true"
+        containers:
+          - name: triton-trtllm
+            image: us-west1-docker.pkg.dev/isv-coe-skhas-nvidia/gke-multinode/triton-trtllm:24.10
+            imagePullPolicy: IfNotPresent
+            env:
+              - name: HUGGING_FACE_HUB_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: hf-secret
+                    key: hf_api_token
+              - name: GROUP_KEY
+                valueFrom:
+                  fieldRef:
+                    fieldPath: metadata.labels['leaderworkerset.sigs.k8s.io/group-key']
+            command:
+              - sleep
+              - infinity
+              # - python3
+              # - ./server.py
+              # - leader
+              # - --triton_model_repo_dir=/var/run/models/tensorrtllm_backend/triton_model_repo
+              # - --namespace=default
+              # - --pp=2
+              # - --tp=1
+              # - --gpu_per_node=1
+              # - --stateful_set_group_key=$(GROUP_KEY)
+              # - --verbose
+            ports:
+            - containerPort: 8000
+              name: http
+            - containerPort: 8001
+              name: grpc
+            - containerPort: 8002
+              name: metrics
+            # livenessProbe:
+            #   failureThreshold: 15
+            #   httpGet:
+            #     path: /v2/health/live
+            #     port: 8000
+            #   initialDelaySeconds: 10
+            #   periodSeconds: 2
+            #   successThreshold: 1
+            # startupProbe:
+            #   failureThreshold: 240
+            #   httpGet:
+            #     path: /v2/health/live
+            #     port: 8000
+            #   initialDelaySeconds: 60
+            #   periodSeconds: 15
+            #   successThreshold: 1
+            # readinessProbe:
+            #   tcpSocket:
+            #     port: 8000
+            #   initialDelaySeconds: 15
+            #   periodSeconds: 10
+            # readinessProbe:
+            #   failureThreshold: 15
+            #   httpGet:
+            #     path: /v2/health/ready
+            #     port: 8000
+            #   initialDelaySeconds: 15
+            #   periodSeconds: 2
+            #   successThreshold: 1
+            resources:
+              limits:
+                cpu: 64
+                ephemeral-storage: 1Gi
+                memory: 1024Gi
+                nvidia.com/gpu: 8
+              requests:
+                cpu: 64
+                ephemeral-storage: 1Gi
+                memory: 1024Gi
+                nvidia.com/gpu: 8
+            volumeMounts:
+              - mountPath: /var/run/models
+                name: model-repository
+              - mountPath: /dev/shm
+                name: dshm
+            # restartPolicy: Always
+            # serviceAccountName: default
+        volumes:
+        - name: model-repository
+          persistentVolumeClaim:
+            claimName: fileserver
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Gi
+    workerTemplate:
+      metadata:
+        labels:
+          app: triton-trtllm
+      spec:
+        nodeSelector:
+          cloud.google.com/gke-gpu: "true"
+        containers:
+          - name: worker
+            image: us-west1-docker.pkg.dev/isv-coe-skhas-nvidia/gke-multinode/triton-trtllm:24.10
+            imagePullPolicy: IfNotPresent
+            env:
+              - name: HUGGING_FACE_HUB_TOKEN
+                valueFrom:
+                  secretKeyRef:
+                    name: hf-secret
+                    key: hf_api_token
+            command:
+              - sleep
+              - infinity
+              # - python3
+              # - ./server.py
+              # - worker
+              # - --triton_model_repo_dir=/var/run/models/tensorrtllm_backend/triton_model_repo
+              # - --verbose
+            resources:
+              limits:
+                cpu: 64
+                ephemeral-storage: 1Gi
+                memory: 1024Gi
+                nvidia.com/gpu: 8
+              requests:
+                cpu: 64
+                ephemeral-storage: 1Gi
+                memory: 1024Gi
+                nvidia.com/gpu: 8
+            volumeMounts:
+              - mountPath: /var/run/models
+                name: model-repository
+              - mountPath: /dev/shm
+                name: dshm
+            # serviceAccountName: default
+        restartPolicy: Always
+        volumes:
+        - name: model-repository
+          persistentVolumeClaim:
+            claimName: fileserver
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 15Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: triton-trtllm-svc
+  labels:
+    app: triton-trtllm
+    app.kubernetes.io/component: service
+spec:
+  # type: LoadBalancer
+  ports:
+  - name: http
+    port: 8000
+    targetPort: http
+  - name: grpc
+    port: 8001
+    targetPort: grpc
+  - name: metrics
+    port: 8002
+    targetPort: metrics
+  selector:
+    role: leader
+  # ports:
+  #   - name: http
+  #     port: 8000
+  #     protocol: TCP
+  #     targetPort: 8000
+  # selector:
+  #   role: leader
+  type: ClusterIP
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: default
+  name: pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods
+  namespace: default
+subjects:
+- kind: ServiceAccount
+  name: default
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io

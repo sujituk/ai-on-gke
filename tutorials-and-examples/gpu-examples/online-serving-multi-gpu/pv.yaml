@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: fs-sc
+spec:
+  capacity:
+    storage: 4Ti  # Match the size of your existing Filestore instance
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain  # Important: Prevent accidental deletion
+  csi:
+    driver: filestore.csi.storage.gke.io
+    volumeHandle: fs-llama405b-usw1-b

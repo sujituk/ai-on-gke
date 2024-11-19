@@ -1,0 +1,89 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llama-conversion-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: llama-converter
+        image: nvcr.io/nvidia/tritonserver:24.10-trtllm-python-py3
+        # image: us-west1-docker.pkg.dev/isv-coe-skhas-nvidia/gke-multinode/triton-trtllm:24.10
+        command: ["/bin/bash", "-c"]
+        args:
+        - |-
+          # install prereqs
+          apt-get update -y && apt-get install -y git
+          pip install -U "huggingface_hub[cli]"
+
+          # download repos
+          cd /var/run/models
+          git clone https://github.com/triton-inference-server\/tensorrtllm_backend.git -b v0.12.0
+          cd tensorrtllm_backend
+          git lfs install
+          git submodule update --init --recursive
+
+          cd tensorrt_llm/examples/llama
+
+          python3 convert_checkpoint.py --model_dir /var/run/models/Meta-Llama-3.1-405B \
+            --output_dir ./converted_checkpoint \
+            --dtype bfloat16 \
+            --tp_size 8 \
+            --pp_size 2 \
+            --load_by_shard \
+            --workers 2
+
+          trtllm-build --checkpoint_dir ./converted_checkpoint \
+             --output_dir ./output_engines \
+             --max_num_tokens 4096 \
+             --max_input_len 65536 \
+             --max_seq_len 131072 \
+             --max_batch_size 8 \
+             --use_paged_context_fmha enable \
+             --workers 8
+
+          cd /var/run/models/tensorrtllm_backend
+          mkdir triton_model_repo
+
+          HF_LLAMA_MODEL=/var/run/models/tensorrtllm_backend/tensorrt_llm/examples/llama/Meta-Llama-3.1-405B
+          ENGINE_PATH=/var/run/models/tensorrtllm_backend/tensorrt_llm/examples/llama/output_engines
+
+          python3 tools/fill_template.py -i triton_model_repo/preprocessing/config.pbtxt tokenizer_dir:${HF_LLAMA_MODEL},tokenizer_type:llama,triton_max_batch_size:8,preprocessing_instance_count:1
+
+          python3 tools/fill_template.py -i triton_model_repo/tensorrt_llm/config.pbtxt triton_backend:tensorrtllm,triton_max_batch_size:8,decoupled_mode:True,max_beam_width:1,engine_dir:${ENGINE_PATH},enable_kv_cache_reuse:False,batching_strategy:inflight_batching,max_queue_delay_microseconds:0
+
+          python3 tools/fill_template.py -i triton_model_repo/postprocessing/config.pbtxt tokenizer_dir:${HF_LLAMA_MODEL},tokenizer_type:llama,triton_max_batch_size:8,postprocessing_instance_count:1
+
+          python3 tools/fill_template.py -i triton_model_repo/ensemble/config.pbtxt triton_max_batch_size:8
+
+          sleep infinity
+
+        env:
+          - name: HF_TOKEN
+            valueFrom:
+              secretKeyRef:
+                name: hf-secret
+                key: hf_api_token
+        volumeMounts:
+          - mountPath: /var/run/models
+            name: model-repository
+          - mountPath: /dev/shm
+            name: dshm
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+      nodeSelector:
+        cloud.google.com/gke-gpu: "true"
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      restartPolicy: Never
+      volumes:
+        - name: model-repository
+          persistentVolumeClaim:
+            claimName: fileserver
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Ti

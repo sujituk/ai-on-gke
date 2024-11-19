@@ -1,0 +1,12 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: fileserver
+  namespace: default  
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: fs-sc
+  resources:
+    requests:
+      storage: 4Ti
