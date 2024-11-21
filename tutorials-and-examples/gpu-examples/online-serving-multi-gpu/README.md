@@ -1,0 +1,5 @@
+- Follow steps in dev.sh to create cluster, nodepool and install leaderworkerset
+- Build docker using Dockerfile and push image to local AR
+- update path in the triton_trtllm-llama3-405b-A3.file
+- Use kubectl to exec into container
+- Launch server.py (dev.sh)
