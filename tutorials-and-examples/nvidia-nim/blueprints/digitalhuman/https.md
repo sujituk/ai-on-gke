@@ -29,12 +29,11 @@ Deploying HTTPS endpoints for the digital human blueprint on GKE.
 
     ```
 
-2. **Environment setup**: You'll set up a couple of environment variables to make the following steps easier and more flexible. These variables store important information like cluster names, machine types, and API keys. You need to update the variable values to match your needs and context.
+2. **Environment setup**: You'll set up one environment variable "${NIMS}" to make the following steps easier and more flexible. If you want to include more NIMs, remember to change the port (8000) if required.
 
     ```bash
 
-    export NIMS="dighum-embedqa-e5v5 dighum-llama3-8b dighum-rerankqa-mistral4bv3 dighum-audio2face-3d dighum-fastpitch-tts dighum-maxine-audio2face-2d dighum-parakeet-asr-1-1b"
-    export DOMAIN=<DOMAIN>
+    export NIMS="dighum-embedqa-e5v5 dighum-llama3-8b dighum-rerankqa-mistral4bv3"
 
     ```
 
@@ -48,14 +47,15 @@ Deploying HTTPS endpoints for the digital human blueprint on GKE.
 
     ```
 
-4. **DNS**: Configure the DNS subdomains for each NIM. Our sub-domains for this example should be in this format <NIM>.<DOMAIN> (e.g. llama3-8b.example.com).
+4. **DNS**: Configure the DNS subdomains for each NIM. Our sub-domains for this example will be in this format <YOUR IP>.nip.io
 
-5. **Creating the SSL Certs**
+5. **Creating the SSL Certs**: Based on the previous global external IP(s) reserved on the step 3
 
     ```bash
 
     for NIM in ${NIMS}; do
-      gcloud compute ssl-certificates create ${NIM}-cert --domains=${NIM}.${DOMAIN};
+      NIM_DNS="`gcloud compute addresses list --filter=name=${NIM}-ip --format='value(address)'`.nip.io"
+      gcloud compute ssl-certificates create ${NIM}-cert --domains=${NIM_DNS};
     done
 
     ```
@@ -65,6 +65,8 @@ Deploying HTTPS endpoints for the digital human blueprint on GKE.
     ```bash
 
     for NIM in ${NIMS}; do
+      NIM_DNS="`gcloud compute addresses list --filter=name=${NIM}-ip --format='value(address)'`.nip.io"
+
     kubectl apply -f - <<EOF
     apiVersion: v1
     kind: Service
@@ -105,7 +107,7 @@ Deploying HTTPS endpoints for the digital human blueprint on GKE.
       - kind: Gateway
         name: ${NIM}-gw
       hostnames:
-      - "${NIM}.${DOMAIN}"
+      - "${NIM_DNS}"
       rules:
       - backendRefs:
         - name: ${NIM}-svc
@@ -133,24 +135,33 @@ Deploying HTTPS endpoints for the digital human blueprint on GKE.
         kind: Service
         name: ${NIM}-svc
     EOF
+
     done
 
     ```
 
-*The certificate can take 15 minutes to be attached to the LB
+### Check certificates
 
-## Remove LB services
+The certificate can take 15 minutes to be attached to the LB
 
-*Ensure that your HTTPS connection is working before remove the LB services
-
-1. **Delete the old LB services**
+1. **To check**
 
     ```bash
 
-    SERVICES=$(k get svc | awk '{print $1}' | grep -v NAME | grep '^dighum.*-lb$')
+    gcloud compute ssl-certificates list
 
-    for service in $SERVICES; do
-      kubectl delete svc ${service}
+    ```
+
+## Remove LB services
+
+Ensure that your HTTPS connection is working before remove the LB services
+
+1. **Delete the old LB services for the HTTPS NIMs**
+
+    ```bash
+
+    for NIM in ${NIMS}; do
+      kubectl delete svc ${NIM}-lb
     done
 
     ```
