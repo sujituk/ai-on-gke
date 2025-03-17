@@ -123,8 +123,6 @@ Deploying HTTPS endpoints for the digital human blueprint on GKE.
         timeoutSec: 1
         healthyThreshold: 1
         unhealthyThreshold: 2
-        logConfig:
-          enabled: true
         config:
           type: TCP
           httpHealthCheck:
